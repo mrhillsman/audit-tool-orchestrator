@@ -1,9 +1,9 @@
 package orchestrate
 
 import (
-	"bufio"
 	"context"
 	"fmt"
+	"github.com/mcuadros/go-version"
 	hivev1api "github.com/openshift/hive/apis/hive/v1"
 	hivev1client "github.com/openshift/hive/pkg/client/clientset/versioned"
 	log "github.com/sirupsen/logrus"
@@ -15,9 +15,8 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"net/http"
 	"os"
-	"regexp"
+	"strings"
 	"time"
 )
 
@@ -67,67 +66,29 @@ func K8sClientForAudit(kubeconfig []byte) *kubernetes.Clientset {
 }
 
 func GetOpenShiftVersions(flags PoolFlags) string {
-	resp, err := http.Get("https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable-" + flags.OpenShift + "/release.txt")
-	if err != nil {
-		log.Errorf("Unable to get stable OpenShift version from mirror.openshift.com: %v\n", err)
-	}
-	scanner := bufio.NewScanner(resp.Body)
-	r, err := regexp.Compile(`^Name:\s*(\d+\.\d+\.\d+)`)
-	if err != nil {
-		log.Errorf("Unable to read the response body from mirror.openshift.com: %v\n", err)
-	}
-
-	for scanner.Scan() {
-		if r.MatchString(scanner.Text()) {
-			scanResult := r.FindStringSubmatch(scanner.Text())
-			return scanResult[1]
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Errorf("%v\n", err)
-		return "Error getting OpenShift version."
-	}
-
-	return "Unable to get OpenShift version."
-
-	// TODO: next two commented blocks for reference only remove when binary is ready
-	/*ctx := context.Background()
-	clusterImageSets, err := hvclient.HiveV1().ClusterImageSets().List(ctx, metav1.ListOptions{})
+	ctx := context.Background()
+	clusterImageSets, err := GetHiveClient().HiveV1().ClusterImageSets().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		log.Errorf("Unable to get ClusterImageSets: %v\n", err)
 	}
 
+	log.Info(clusterImageSets.Items)
 	var cisNames []string
 
 	for _, cis := range clusterImageSets.Items {
-		cisNames = append(cisNames, "v"+strings.Split(cis.Name, "-")[1])
+		cisNames = append(cisNames, strings.Split(cis.Name, "-")[1])
 	}
 
-	semver.Sort(cisNames)
+	version.Sort(cisNames)
 
-	log.Info(cisNames)*/
+	var selectedVersion []string
+	for _, v := range cisNames {
+		if strings.Contains(v, flags.OpenShift) {
+			selectedVersion = append(selectedVersion, v)
+		}
+	}
 
-	/*
-		    from distutils.version import StrictVersion
-
-			def get_openshift_versions():
-			    payload = requests.get(
-			        "https://quay.io/api/v1/repository/openshift-release-dev/ocp-release?includeTags=true").json()
-			    versions = jq.compile(".tags|with_entries(select(.key|match(\"x86_64\")))|keys").input(payload).first()
-			    pattern = ".*(hotfix|assembly|art|fc|rc|nightly|bad).*"
-			    images = []
-			    selectable_versions = []
-			    filtered = [version for version in versions if not re.match(pattern, version)]
-			    for version in filtered:
-			        release = version.split("-")
-			        image = release[0]
-			        images.append(image)
-			    images.sort(key=StrictVersion, reverse=True)
-			    for image in images:
-			        selectable_versions.append((image, "ocp-" + image))
-			    return selectable_versions
-	*/
+	return selectedVersion[len(selectedVersion)-1]
 }
 
 func WaitForSuccessfulClusterPool(hvclient *hivev1client.Clientset, pool *hivev1api.ClusterPool) (string, error) {
